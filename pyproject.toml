@@ -1,0 +1,53 @@
+[project]
+name = "text-to-sql-mcp"
+version = "0.1.0"
+description = "Agent text-to-SQL exposé à Claude via un serveur MCP maison, avec garde-fous et harnais d'évaluation."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "mcp[cli]>=2,<3",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+# --- Ruff : lint + formatage -------------------------------------------------
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # tri des imports
+    "B",       # bugbear : bugs probables
+    "UP",      # pyupgrade : syntaxe Python moderne
+    "SIM",     # simplifications
+    "RUF",     # règles propres à ruff
+]
+# Le repo est rédigé en français : on autorise les caractères typographiques
+# (apostrophe courbe, espaces insécables, guillemets « »…) dans les chaînes,
+# docstrings et commentaires.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+# Dans un notebook, les imports au fil des cellules sont normaux.
+"notebooks/*" = ["E402"]
+
+# --- Pytest -------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers"]
+# Toute API MCP dépréciée (spec 2026-07-28) fait échouer les tests.
+filterwarnings = ["error::mcp.MCPDeprecationWarning"]

@@ -1,0 +1,21 @@
+# Fichiers générés par Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Environnement virtuel
+.venv
+
+# Secrets : seul .env.example est versionné
+.env
+
+# Caches des outils
+.ruff_cache/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+.vscode/
