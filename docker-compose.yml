@@ -1,0 +1,30 @@
+# Base PostgreSQL 17 + Chinook, avec le rôle lecture seule de l'agent.
+# Démarrage : docker compose up -d   |   Remise à zéro : docker compose down -v
+services:
+  db:
+    image: postgres:17
+    environment:
+      # Superutilisateur d'administration (jamais utilisé par l'agent).
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-chinook_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?à définir dans .env}
+      # POSTGRES_DB reste à sa valeur par défaut (postgres) : 01_chinook.sql
+      # crée lui-même la base chinook et ne peut pas supprimer la base courante.
+      # Lu par 02_role_lecture_seule.sql pour créer le rôle de l'agent.
+      AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:?à définir dans .env}
+    ports:
+      # Publié sur 127.0.0.1 uniquement : la base n'est pas joignable depuis le réseau local.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - chinook_data:/var/lib/postgresql/data
+      # Scripts exécutés une seule fois, au premier démarrage (volume vide), par ordre alphabétique.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Passe au vert seulement après l'init : pendant les scripts, le serveur
+      # temporaire n'écoute pas en TCP.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d chinook"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  chinook_data:

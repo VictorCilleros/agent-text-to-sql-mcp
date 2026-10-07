@@ -1,6 +1,10 @@
-# Hooks exécutés à chaque commit.
-#Installation : uv run pre-commit install
+# Hooks exécutés à chaque commit. Installation : uv run pre-commit install
 # Mise à jour des versions : uv run pre-commit autoupdate
+
+# Script Chinook tiers, versionné tel quel (vérifiable par son empreinte SHA-256) :
+# aucun hook ne doit le modifier.
+exclude: ^docker/initdb/01_chinook\.sql$
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -23,4 +27,4 @@ repos:
   - repo: https://github.com/kynan/nbstripout
     rev: 0.9.1
     hooks:
-      - id: nbstripout  # sorties notebooks
+      - id: nbstripout  # supprime les sorties des notebooks avant commit

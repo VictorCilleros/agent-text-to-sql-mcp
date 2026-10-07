@@ -20,6 +20,30 @@ uv run pre-commit install     # active les hooks de qualité au commit
 uv run pytest                 # lance les tests
 ```
 
+## Base de données (Docker)
+
+Prérequis : Docker et le plugin `docker compose`.
+
+```bash
+cp .env.example .env          # puis remplacer les mots de passe
+docker compose up -d          # premier démarrage : chargement de Chinook + rôle lecture seule
+docker compose ps             # attendre l'état « healthy »
+docker compose down -v        # tout supprimer, données comprises (repartir de zéro)
+```
+
+La base `chinook` est exposée sur `127.0.0.1` uniquement. L'agent s'y connecte avec le rôle
+`agent_lecteur`, qui n'a que des droits de lecture (`SELECT`) et des transactions en lecture
+seule par défaut.
+
+### Données
+
+[Chinook](https://github.com/lerocha/chinook-database) v1.4.5, script PostgreSQL officiel
+(identifiants en snake_case), versionné sans modification dans `docker/initdb/01_chinook.sql`.
+
+- Source : `https://github.com/lerocha/chinook-database/releases/download/v1.4.5/Chinook_PostgreSql.sql`
+- SHA-256 : `e3fde5c1a5b51a2a91429a702c9ca6e69ba56e6c7f5e112724d70c3d03db695e`
+- Licence : MIT, © Luis Rocha (voir [`docker/LICENSE-chinook.md`](docker/LICENSE-chinook.md))
+
 ## Licence
 
 [MIT](LICENSE)

@@ -1,0 +1,2 @@
+# Script tiers versionné tel quel : exclu des statistiques de langage GitHub.
+docker/initdb/01_chinook.sql linguist-vendored
