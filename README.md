@@ -20,6 +20,10 @@ uv run pre-commit install     # active les hooks de qualité au commit
 uv run pytest                 # lance les tests
 ```
 
+Les tests marqués `integration` utilisent la base Docker (voir ci-dessous) et sont sautés,
+avec un message explicite, si elle n'est pas joignable. Pour ne lancer que les tests unitaires :
+`uv run pytest -m "not integration"`.
+
 ## Base de données (Docker)
 
 Prérequis : Docker et le plugin `docker compose`.

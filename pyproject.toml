@@ -49,6 +49,9 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 
 # --- Pytest -------------------------------------------------------------------
 [tool.pytest.ini_options]
+ markers = [
+       "integration: nécessite la base PostgreSQL (docker compose up -d) ; exclure avec -m 'not integration'",
+   ]
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers"]
 # Toute API MCP dépréciée (spec 2026-07-28) fait échouer les tests.
