@@ -48,6 +48,16 @@ seule par défaut.
 - SHA-256 : `e3fde5c1a5b51a2a91429a702c9ca6e69ba56e6c7f5e112724d70c3d03db695e`
 - Licence : MIT, © Luis Rocha (voir [`docker/LICENSE-chinook.md`](docker/LICENSE-chinook.md))
 
+## Serveur MCP
+
+Trois outils en lecture seule : `list_tables`, `get_schema` (colonnes, types, clés) et
+`run_query` (une requête de lecture, résultat plafonné à `ROW_CAP` lignes).
+
+```bash
+uv run text-to-sql-mcp                                   # lance le serveur sur stdio
+npx @modelcontextprotocol/inspector uv run text-to-sql-mcp   # interface de test (Node requis)
+```
+
 ## Licence
 
 [MIT](LICENSE)

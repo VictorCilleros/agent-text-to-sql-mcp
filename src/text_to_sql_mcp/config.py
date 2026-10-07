@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     agent_db_user: str = "agent_lecteur"
     agent_db_password: SecretStr
     connect_timeout: int = Field(default=5, ge=1, description="Délai de connexion, en secondes.")
+    row_cap: int = Field(
+        default=100, ge=1, le=1000, description="Nombre maximal de lignes renvoyées par run_query."
+    )
 
     def conninfo(self) -> str:
         """Construit la chaîne de connexion libpq du rôle lecture seule.

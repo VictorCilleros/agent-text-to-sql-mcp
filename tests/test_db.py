@@ -37,20 +37,20 @@ def test_list_table_names() -> None:
 
 
 def test_describe_table_colonnes_types_et_cles() -> None:
-    colonnes = {colonne["column_name"]: colonne for colonne in db.describe_table("track")}
+    colonnes = {colonne.column_name: colonne for colonne in db.describe_table("track")}
     assert next(iter(colonnes)) == "track_id"
-    assert colonnes["track_id"]["primary_key"] is True
-    assert colonnes["album_id"]["foreign_key"] == "album.album_id"
-    assert colonnes["unit_price"]["data_type"] == "numeric(10,2)"
-    assert colonnes["composer"]["nullable"] is True
-    assert colonnes["name"]["nullable"] is False
+    assert colonnes["track_id"].primary_key is True
+    assert colonnes["album_id"].foreign_key == "album.album_id"
+    assert colonnes["unit_price"].data_type == "numeric(10,2)"
+    assert colonnes["composer"].nullable is True
+    assert colonnes["name"].nullable is False
 
 
 def test_describe_table_cle_primaire_composite() -> None:
-    colonnes = {c["column_name"]: c for c in db.describe_table("playlist_track")}
-    assert all(c["primary_key"] for c in colonnes.values())
-    assert colonnes["playlist_id"]["foreign_key"] == "playlist.playlist_id"
-    assert colonnes["track_id"]["foreign_key"] == "track.track_id"
+    colonnes = {c.column_name: c for c in db.describe_table("playlist_track")}
+    assert all(c.primary_key for c in colonnes.values())
+    assert colonnes["playlist_id"].foreign_key == "playlist.playlist_id"
+    assert colonnes["track_id"].foreign_key == "track.track_id"
 
 
 @pytest.mark.parametrize(
@@ -90,3 +90,63 @@ def test_privileges_bloquent_meme_sans_filet_lecture_seule() -> None:
         conn.execute("SELECT set_config('default_transaction_read_only', 'off', false)")
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("INSERT INTO genre (genre_id, name) VALUES (999, 'Test')")
+
+
+# --- run_query ---------------------------------------------------------------------------
+
+
+def test_run_query_colonnes_et_lignes() -> None:
+    resultat = db.run_query("SELECT genre_id, name FROM genre ORDER BY genre_id LIMIT 3", 10)
+    assert resultat.columns == ["genre_id", "name"]
+    assert resultat.rows == [[1, "Rock"], [2, "Jazz"], [3, "Metal"]]
+    assert (resultat.row_count, resultat.truncated) == (3, False)
+
+
+def test_run_query_plafonne_et_signale_la_troncature() -> None:
+    resultat = db.run_query("SELECT track_id FROM track", 50)
+    assert (resultat.row_count, resultat.truncated, resultat.row_cap) == (50, True, 50)
+
+
+def test_run_query_pile_au_plafond_non_tronque() -> None:
+    resultat = db.run_query("SELECT genre_id FROM genre", 25)  # Chinook a 25 genres
+    assert (resultat.row_count, resultat.truncated) == (25, False)
+
+
+def test_run_query_convertit_les_types_en_json() -> None:
+    resultat = db.run_query(
+        "SELECT total, invoice_date FROM invoice ORDER BY invoice_id LIMIT 1", 10
+    )
+    total, date = resultat.rows[0]
+    assert total == "1.98"
+    assert date.startswith("2021-01-01")
+
+
+def test_run_query_pourcent_litteral() -> None:
+    resultat = db.run_query("SELECT count(*) FROM genre WHERE name LIKE 'Rock%'", 10)
+    assert resultat.rows == [[2]]  # Rock, Rock And Roll
+
+
+@pytest.mark.parametrize(
+    ("requete", "sqlstate"),
+    [
+        ("INSERT INTO genre (genre_id, name) VALUES (999, 'Test')", "42601"),
+        ("SELECT 1; DROP TABLE genre", "42601"),
+        ("WITH d AS (DELETE FROM genre RETURNING *) SELECT * FROM d", "0A000"),
+        ("SHOW search_path", "42601"),
+    ],
+)
+def test_run_query_refuse_tout_sauf_une_lecture(requete: str, sqlstate: str) -> None:
+    with pytest.raises(db.QueryError, match="lecture unique") as erreur:
+        db.run_query(requete, 10)
+    assert erreur.value.sqlstate == sqlstate
+
+
+def test_run_query_erreur_lisible_pour_l_agent() -> None:
+    with pytest.raises(db.QueryError, match="42703") as erreur:
+        db.run_query("SELECT nom FROM genre", 10)
+    assert 'column "nom" does not exist' in str(erreur.value)
+
+
+def test_run_query_vide() -> None:
+    with pytest.raises(db.QueryError, match="vide"):
+        db.run_query("   ", 10)
