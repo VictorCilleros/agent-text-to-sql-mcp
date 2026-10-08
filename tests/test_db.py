@@ -2,9 +2,11 @@
 
 import psycopg
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from text_to_sql_mcp import db
 from text_to_sql_mcp.config import get_settings
+from text_to_sql_mcp.guardrails import GuardrailError
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("base_disponible")]
 
@@ -127,18 +129,25 @@ def test_run_query_pourcent_litteral() -> None:
 
 
 @pytest.mark.parametrize(
-    ("requete", "sqlstate"),
+    "requete",
     [
-        ("INSERT INTO genre (genre_id, name) VALUES (999, 'Test')", "42601"),
-        ("SELECT 1; DROP TABLE genre", "42601"),
-        ("WITH d AS (DELETE FROM genre RETURNING *) SELECT * FROM d", "0A000"),
-        ("SHOW search_path", "42601"),
+        "INSERT INTO genre (genre_id, name) VALUES (999, 'Test')",
+        "SELECT 1; DROP TABLE genre",
+        "WITH d AS (DELETE FROM genre RETURNING *) SELECT * FROM d",
+        "SHOW search_path",
+        "SELECT usename FROM pg_user",
+        "SELECT pg_sleep(10)",
     ],
 )
-def test_run_query_refuse_tout_sauf_une_lecture(requete: str, sqlstate: str) -> None:
-    with pytest.raises(db.QueryError, match="lecture unique") as erreur:
+def test_run_query_refuse_par_les_garde_fous(requete: str) -> None:
+    with pytest.raises(GuardrailError):
         db.run_query(requete, 10)
-    assert erreur.value.sqlstate == sqlstate
+
+
+def test_run_query_execute_le_sql_valide_avec_limit() -> None:
+    resultat = db.run_query("SELECT name FROM genre", 10)
+    assert resultat.executed_sql == "SELECT name FROM genre LIMIT 11"
+    assert (resultat.row_count, resultat.truncated) == (10, True)
 
 
 def test_run_query_erreur_lisible_pour_l_agent() -> None:
@@ -147,6 +156,25 @@ def test_run_query_erreur_lisible_pour_l_agent() -> None:
     assert 'column "nom" does not exist' in str(erreur.value)
 
 
-def test_run_query_vide() -> None:
-    with pytest.raises(db.QueryError, match="vide"):
-        db.run_query("   ", 10)
+def test_run_query_timeout_message_pour_l_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STATEMENT_TIMEOUT", "1")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(db.QueryError, match="délai de 1 s") as erreur:
+            db.run_query("SELECT count(*) FROM track a CROSS JOIN track b CROSS JOIN genre c", 10)
+    finally:
+        get_settings.cache_clear()
+    assert erreur.value.sqlstate == "57014"
+
+
+def test_timeout_de_session_prioritaire_sur_celui_du_role() -> None:
+    with db.connect() as conn:
+        delai = conn.execute("SHOW statement_timeout").fetchone()[0]
+    assert delai == f"{get_settings().statement_timeout}s"
+
+
+def test_timeout_du_role_en_filet() -> None:
+    """Sans réglage de session, le rôle plafonne lui-même ses requêtes à 30 s."""
+    sans_option = make_conninfo(get_settings().conninfo(), options="")
+    with psycopg.connect(sans_option) as conn:
+        assert conn.execute("SHOW statement_timeout").fetchone()[0] == "30s"

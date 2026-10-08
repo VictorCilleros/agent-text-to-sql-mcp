@@ -48,4 +48,7 @@ GRANT USAGE ON SCHEMA public TO agent_lecteur;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO agent_lecteur;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO agent_lecteur;
 
--- Jalon 2 : statement_timeout sur ce rôle (garde-fou anti-requêtes longues).
+-- 6. Filet anti-requêtes longues : toute requête de ce rôle est annulée après 30 s,
+--    quel que soit le client (serveur MCP, DBeaver…). Le serveur MCP fixe un délai plus
+--    court à la connexion (STATEMENT_TIMEOUT, 5 s par défaut), prioritaire sur celui-ci.
+ALTER ROLE agent_lecteur SET statement_timeout = '30s';

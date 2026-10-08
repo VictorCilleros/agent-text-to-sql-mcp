@@ -17,6 +17,7 @@ from psycopg.rows import class_row
 from pydantic import BaseModel, JsonValue
 
 from text_to_sql_mcp.config import get_settings
+from text_to_sql_mcp.guardrails import validate_query
 
 
 class UnknownTableError(ValueError):
@@ -67,6 +68,7 @@ class ColumnInfo(BaseModel):
 class QueryResult(BaseModel):
     """Résultat plafonné d'une requête, au format compact colonnes + lignes."""
 
+    executed_sql: str
     columns: list[str]
     rows: list[list[JsonValue]]
     row_count: int
@@ -75,7 +77,8 @@ class QueryResult(BaseModel):
 
 
 # Erreurs de forme : requête vide, plusieurs instructions, écriture, ou instruction autre
-# qu'une lecture (SHOW, EXPLAIN…). Le curseur serveur les rejette avant toute exécution.
+# qu'une lecture (SHOW, EXPLAIN…). Normalement arrêtées par guardrails ; le curseur serveur
+# les rejette aussi, en seconde barrière.
 _SQLSTATE_FORME = {"42601", "0A000"}
 _RAPPEL_FORME = "Seule une requête de lecture unique est acceptée (SELECT, ou WITH … SELECT)."
 
@@ -181,11 +184,15 @@ def to_json_value(value: Any) -> JsonValue:
 
 
 def run_query(sql: str, row_cap: int) -> QueryResult:
-    """Exécute une requête de lecture et renvoie au plus `row_cap` lignes.
+    """Valide puis exécute une requête de lecture, et renvoie au plus `row_cap` lignes.
 
-    La requête passe par un curseur côté serveur (`DECLARE … CURSOR FOR`) : seules les lignes
-    lues traversent le réseau, et PostgreSQL rejette d'emblée tout ce qui n'est pas une
-    lecture unique (plusieurs instructions, INSERT, SHOW, CTE modifiante…).
+    La requête est d'abord validée par `guardrails.validate_query` (lecture unique, tables de
+    la liste blanche, pas de fonction interdite, LIMIT imposé). C'est le SQL **régénéré** à
+    partir de l'arbre validé qui est exécuté, renvoyé dans `executed_sql`.
+
+    L'exécution passe par un curseur côté serveur (`DECLARE … CURSOR FOR`) : seules les lignes
+    lues traversent le réseau, et PostgreSQL rejette lui aussi tout ce qui n'est pas une
+    lecture unique. Le délai est borné par le `statement_timeout` de la connexion.
     La requête n'est jamais paramétrée : un `%` (par exemple dans un LIKE) reste littéral.
 
     Args:
@@ -193,29 +200,41 @@ def run_query(sql: str, row_cap: int) -> QueryResult:
         row_cap: Nombre maximal de lignes renvoyées.
 
     Returns:
-        Les colonnes, les lignes converties en JSON et l'indicateur de troncature.
+        Le SQL exécuté, les colonnes, les lignes converties en JSON et l'indicateur de
+        troncature.
 
     Raises:
-        QueryError: Si la requête est vide, refusée ou en échec côté PostgreSQL.
+        GuardrailError: Si la requête enfreint une règle de validation.
+        QueryError: Si PostgreSQL refuse la requête, échoue ou dépasse le délai.
     """
-    if not sql.strip():
-        raise QueryError(None, "la requête est vide.")
-    try:
-        with connect() as conn, conn.cursor(name="run_query") as cur:
-            cur.execute(sql)
-            rows = cur.fetchmany(row_cap + 1)
-            columns = [column.name for column in cur.description or []]
-    except psycopg.OperationalError:
-        raise
-    except psycopg.Error as erreur:
-        hint = erreur.diag.message_hint
-        if erreur.sqlstate in _SQLSTATE_FORME:
-            hint = f"{hint} {_RAPPEL_FORME}" if hint else _RAPPEL_FORME
-        message = erreur.diag.message_primary or str(erreur)
-        raise QueryError(erreur.sqlstate, message, hint) from erreur
+    with connect() as conn:
+        executed_sql = validate_query(
+            sql, _table_names(conn), row_cap=row_cap, schema=get_settings().db_schema
+        )
+        try:
+            with conn.cursor(name="run_query") as cur:
+                cur.execute(executed_sql)
+                rows = cur.fetchmany(row_cap + 1)
+                columns = [column.name for column in cur.description or []]
+        except psycopg.errors.QueryCanceled as erreur:
+            delai = get_settings().statement_timeout
+            raise QueryError(
+                erreur.sqlstate,
+                f"la requête a dépassé le délai de {delai} s et a été annulée.",
+                "Filtrer davantage, agréger, ou éviter les produits cartésiens.",
+            ) from erreur
+        except psycopg.OperationalError:
+            raise  # panne de connexion : erreur d'infrastructure, masquée au modèle
+        except psycopg.Error as erreur:
+            hint = erreur.diag.message_hint
+            if erreur.sqlstate in _SQLSTATE_FORME:
+                hint = f"{hint} {_RAPPEL_FORME}" if hint else _RAPPEL_FORME
+            message = erreur.diag.message_primary or str(erreur)
+            raise QueryError(erreur.sqlstate, message, hint) from erreur
     truncated = len(rows) > row_cap
     rows = rows[:row_cap]
     return QueryResult(
+        executed_sql=executed_sql,
         columns=columns,
         rows=[[to_json_value(value) for value in row] for row in rows],
         row_count=len(rows),

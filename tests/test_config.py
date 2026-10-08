@@ -14,6 +14,9 @@ VARIABLES = [
     "AGENT_DB_USER",
     "AGENT_DB_PASSWORD",
     "CONNECT_TIMEOUT",
+    "ROW_CAP",
+    "STATEMENT_TIMEOUT",
+    "LOG_LEVEL",
 ]
 
 
@@ -63,3 +66,13 @@ def test_conninfo_echappe_les_caracteres_speciaux() -> None:
     assert params["user"] == "agent_lecteur"
     assert params["dbname"] == "chinook"
     assert params["application_name"] == "text-to-sql-mcp"
+
+
+def test_conninfo_fixe_le_timeout_de_session() -> None:
+    params = conninfo_to_dict(reglages(statement_timeout=7).conninfo())
+    assert params["options"] == "-c statement_timeout=7s"
+
+
+def test_timeout_plafonne_au_filet_du_role() -> None:
+    with pytest.raises(ValidationError):
+        reglages(statement_timeout=60)

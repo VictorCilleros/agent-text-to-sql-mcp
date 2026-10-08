@@ -1,6 +1,7 @@
 """Configuration centrale de l'application, lue depuis l'environnement et le fichier .env."""
 
 from functools import cache
+from typing import Literal
 
 from psycopg.conninfo import make_conninfo
 from pydantic import Field, SecretStr
@@ -28,6 +29,13 @@ class Settings(BaseSettings):
     row_cap: int = Field(
         default=100, ge=1, le=1000, description="Nombre maximal de lignes renvoyées par run_query."
     )
+    statement_timeout: int = Field(
+        default=5,
+        ge=1,
+        le=30,
+        description="Durée maximale d'une requête, en secondes (le rôle PostgreSQL plafonne à 30).",
+    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     def conninfo(self) -> str:
         """Construit la chaîne de connexion libpq du rôle lecture seule.
@@ -46,6 +54,8 @@ class Settings(BaseSettings):
             password=self.agent_db_password.get_secret_value(),
             connect_timeout=self.connect_timeout,
             application_name="text-to-sql-mcp",
+            # Réglage de session : prioritaire sur le statement_timeout du rôle (30 s).
+            options=f"-c statement_timeout={self.statement_timeout}s",
         )
 
 

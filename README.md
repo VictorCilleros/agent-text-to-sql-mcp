@@ -53,6 +53,26 @@ seule par défaut.
 Trois outils en lecture seule : `list_tables`, `get_schema` (colonnes, types, clés) et
 `run_query` (une requête de lecture, résultat plafonné à `ROW_CAP` lignes).
 
+### Garde-fous (défense en profondeur)
+
+| Couche | Où | Ce qu'elle bloque |
+|---|---|---|
+| Privilèges `SELECT` seuls | rôle PostgreSQL | toute écriture, DDL, escalade |
+| Transaction `READ ONLY` | connexion (`db.py`) | écriture, même après un `set_config` |
+| Validation sqlglot | `guardrails.py` | plusieurs instructions, écriture cachée (CTE, `SELECT INTO`, `FOR UPDATE`), tables système, fonctions d'administration (`pg_*`, `set_config`…) |
+| `LIMIT` imposé + plafond de lignes | `guardrails.py`, `db.py` | résultats massifs, tris coûteux |
+| Curseur côté serveur | `db.py` | tout ce qui n'est pas une lecture unique (seconde barrière) |
+| `statement_timeout` | connexion (5 s) et rôle (30 s) | requêtes trop longues |
+
+Le SQL exécuté est celui **régénéré par sqlglot** à partir de l'arbre validé (renvoyé dans
+`executed_sql`) : on exécute exactement ce qui a été vérifié.
+
+### Logs
+
+Une ligne JSON par appel d'outil sur stderr (stdout est réservé au protocole MCP), avec le
+client appelant (`clientInfo`), l'outil, le statut (`ok`, `refus`, `erreur`, `echec`), la durée,
+le nombre de lignes, le SQL soumis et le SQL exécuté.
+
 ```bash
 uv run text-to-sql-mcp                                   # lance le serveur sur stdio
 npx @modelcontextprotocol/inspector uv run text-to-sql-mcp   # interface de test (Node requis)
