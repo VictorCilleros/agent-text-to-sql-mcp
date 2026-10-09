@@ -17,7 +17,7 @@ from anthropic import AsyncAnthropic
 from pydantic import BaseModel, JsonValue
 
 from text_to_sql_mcp import db
-from text_to_sql_mcp.agent import AgentResult, ask
+from text_to_sql_mcp.agent import AgentResult, ask, reselect_answer_query
 from text_to_sql_mcp.config import get_agent_settings
 from text_to_sql_mcp.evaluation.comparison import Reason, grade
 from text_to_sql_mcp.evaluation.gold import GoldQuestion
@@ -228,6 +228,74 @@ async def evaluate(
         if anthropic is None:
             await client.close()
     return sorted(enregistrements, key=lambda e: (e.question_id, e.repetition))
+
+
+def regrade(
+    records: Iterable[EvalRecord],
+    questions: Iterable[GoldQuestion],
+    references: ReferenceRows,
+) -> list[EvalRecord]:
+    """Re-note des enregistrements avec les règles actuelles, sans relancer l'agent.
+
+    Chaque enregistrement garde le résultat complet de l'agent : sa réponse, et tous ses
+    appels d'outils avec leurs résultats. On peut donc rejouer la notation à l'identique
+    après un changement de règle : nouvelle sélection de la requête de la réponse
+    (`reselect_answer_query`), puis nouvelle note (`grade`). Rien n'est appelé : ni API, ni
+    serveur MCP (seules les références, déjà calculées, sont nécessaires).
+
+    Les enregistrements en erreur (`erreur_agent`, sans résultat d'agent) sont rendus tels
+    quels. Latence, tokens et coût ne changent pas.
+
+    Args:
+        records: Enregistrements à re-noter (lus par `load_records`, par exemple).
+        questions: Questions du gold set.
+        references: Résultats des références (`compute_references`).
+
+    Returns:
+        De nouveaux enregistrements, dans le même ordre ; les originaux ne sont pas modifiés.
+
+    Raises:
+        KeyError: Si un enregistrement porte sur une question absente de `questions`.
+    """
+    par_id = {question.id: question for question in questions}
+    renotes = []
+    for enregistrement in records:
+        if enregistrement.agent is None:
+            renotes.append(enregistrement)
+            continue
+        if enregistrement.question_id not in par_id:
+            raise KeyError(f"Question inconnue du gold set : {enregistrement.question_id}.")
+        agent = reselect_answer_query(enregistrement.agent)
+        verdict = grade(
+            par_id[enregistrement.question_id],
+            agent,
+            references.get(enregistrement.question_id, []),
+        )
+        renotes.append(
+            enregistrement.model_copy(
+                update={
+                    "correct": verdict.correct,
+                    "reason": verdict.reason,
+                    "reference_index": verdict.reference_index,
+                    "executed_sql": agent.executed_sql,
+                    "agent": agent,
+                }
+            )
+        )
+    return renotes
+
+
+def save_records(records: Iterable[EvalRecord], path: Path) -> None:
+    """Écrit des enregistrements dans un fichier JSONL (remplacé s'il existe).
+
+    Args:
+        records: Enregistrements à écrire.
+        path: Fichier de destination ; ses dossiers sont créés au besoin.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fichier:
+        for enregistrement in records:
+            fichier.write(enregistrement.model_dump_json() + "\n")
 
 
 def load_records(*paths: Path) -> list[EvalRecord]:

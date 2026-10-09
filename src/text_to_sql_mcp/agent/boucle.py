@@ -19,6 +19,7 @@ from functools import cache
 from importlib.resources import files
 from typing import Any, Literal
 
+import sqlglot
 from anthropic import AsyncAnthropic
 from mcp import Client, StdioServerParameters
 from mcp.types import Implementation
@@ -70,6 +71,10 @@ LAST_TURN_NOTICE = (
 """Ajouté au dernier message `user` avant le dernier appel autorisé à l'API."""
 
 _NOM_PROMPT = re.compile(r"[a-z0-9_]+")
+_BLOC_SQL = re.compile(r"```(?:sql)?[ \t]*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+
+QuerySelection = Literal["presented", "last_successful"]
+"""Comment la requête de la réponse a été choisie parmi les `run_query` réussis."""
 
 
 class ToolCall(BaseModel):
@@ -86,9 +91,11 @@ class ToolCall(BaseModel):
 class AgentResult(BaseModel):
     """Ce que l'agent a fait pour une question, tel qu'observé par notre code.
 
-    `executed_sql`, `columns`, `rows` et `truncated` viennent de la dernière requête
-    `run_query` **réussie** : c'est son résultat que l'évaluation comparera à la référence.
-    Ils valent `None` si aucune requête n'a abouti (question sans réponse, par exemple).
+    `executed_sql`, `columns`, `rows` et `truncated` viennent de la requête de la réponse,
+    choisie par `select_answer_query` parmi les `run_query` réussis : celle que l'agent
+    présente dans sa réponse, sinon la dernière (`selected_query` dit laquelle). C'est son
+    résultat que l'évaluation compare à la référence. Ils valent `None` si aucune requête n'a
+    abouti (question sans réponse, par exemple).
     """
 
     question: str
@@ -103,6 +110,7 @@ class AgentResult(BaseModel):
     columns: list[str] | None
     rows: list[list[JsonValue]] | None
     truncated: bool | None
+    selected_query: QuerySelection | None = None
     tool_calls: list[ToolCall]
     tool_errors: int
     turns: int
@@ -331,9 +339,7 @@ def _build_result(
     duree_s: float,
 ) -> AgentResult:
     """Assemble l'`AgentResult` à partir des observations de la boucle."""
-    reussies = [c for c in journal if c.name == "run_query" and not c.is_error]
-    donnees = (reussies[-1].structured or {}) if reussies else {}
-    texte = [b.text for b in reponse.content if b.type == "text"] if reponse else []
+    texte = "\n".join(b.text for b in reponse.content if b.type == "text") if reponse else ""
     return AgentResult(
         question=question,
         model=model,
@@ -342,11 +348,8 @@ def _build_result(
         status=statut,
         stop_reason=reponse.stop_reason if reponse else None,
         turn_limit_reached=turn_limit_reached,
-        answer="\n".join(texte),
-        executed_sql=donnees.get("executed_sql"),
-        columns=donnees.get("columns"),
-        rows=donnees.get("rows"),
-        truncated=donnees.get("truncated"),
+        answer=texte,
+        **_answer_fields(journal, texte),
         tool_calls=list(journal),
         tool_errors=sum(c.is_error for c in journal),
         turns=len(usages),
@@ -354,6 +357,79 @@ def _build_result(
         output_tokens=sum(u.output_tokens for u in usages),
         duration_s=duree_s,
     )
+
+
+def select_answer_query(
+    tool_calls: Sequence[ToolCall], answer: str
+) -> tuple[ToolCall | None, QuerySelection | None]:
+    """Choisit, parmi les `run_query` réussis, celui qui porte la réponse de l'agent.
+
+    L'agent peut lancer une requête de vérification **après** sa requête principale (par
+    exemple : « les genres Jazz et Rock existent-ils ? » après un résultat vide). La dernière
+    requête n'est donc pas forcément la réponse. On retient la requête que l'agent présente
+    dans un bloc de code de sa réponse (le prompt lui demande d'y afficher le SQL exécuté),
+    **à condition qu'elle ait réellement été exécutée** : le texte du modèle ne sert qu'à
+    choisir parmi nos observations, jamais à fournir des lignes. Les deux SQL sont comparés
+    après normalisation par sqlglot (casse, espaces, alias, LIMIT ajouté par les garde-fous).
+
+    Args:
+        tool_calls: Appels d'outils observés, dans l'ordre.
+        answer: Texte de la réponse finale de l'agent.
+
+    Returns:
+        L'appel retenu et la façon dont il a été choisi : `presented` (trouvé dans la réponse)
+        ou `last_successful` (à défaut, le dernier réussi) ; `(None, None)` si aucun
+        `run_query` n'a abouti.
+    """
+    reussis = [c for c in tool_calls if c.name == "run_query" and not c.is_error]
+    if not reussis:
+        return None, None
+    for bloc in reversed(_BLOC_SQL.findall(answer)):
+        forme = _canonical_sql(bloc)
+        for appel in reversed(reussis):
+            candidats = (
+                appel.arguments.get("sql", ""),
+                (appel.structured or {}).get("executed_sql", ""),
+            )
+            if forme in {_canonical_sql(sql) for sql in candidats if sql}:
+                return appel, "presented"
+    return reussis[-1], "last_successful"
+
+
+def reselect_answer_query(result: AgentResult) -> AgentResult:
+    """Recalcule la requête de la réponse d'un résultat déjà obtenu (sans relancer l'agent).
+
+    Sert à re-noter d'anciens enregistrements quand la règle de sélection a changé.
+
+    Args:
+        result: Résultat de l'agent, avec ses appels d'outils.
+
+    Returns:
+        Une copie dont `executed_sql`, `columns`, `rows`, `truncated` et `selected_query`
+        sont recalculés par `select_answer_query`.
+    """
+    return result.model_copy(update=_answer_fields(result.tool_calls, result.answer))
+
+
+def _answer_fields(tool_calls: Sequence[ToolCall], answer: str) -> dict[str, Any]:
+    """Champs de l'`AgentResult` issus de la requête de la réponse."""
+    appel, selection = select_answer_query(tool_calls, answer)
+    donnees = (appel.structured or {}) if appel else {}
+    return {
+        "executed_sql": donnees.get("executed_sql"),
+        "columns": donnees.get("columns"),
+        "rows": donnees.get("rows"),
+        "truncated": donnees.get("truncated"),
+        "selected_query": selection,
+    }
+
+
+def _canonical_sql(sql: str) -> str:
+    """Forme normalisée d'une requête, pour reconnaître le même SQL écrit différemment."""
+    try:
+        return sqlglot.parse_one(sql, read="postgres").sql(dialect="postgres", comments=False)
+    except sqlglot.errors.SqlglotError:
+        return " ".join(sql.split()).rstrip(";").lower()
 
 
 # --- Enveloppe de production ------------------------------------------------------------------

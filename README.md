@@ -149,16 +149,21 @@ publié par la source.
 **Métriques**
 
 - **Execution accuracy** : on compare le résultat de l'agent à celui d'une requête de
-  référence, pas le texte SQL. Même nombre de lignes ; chaque colonne de la référence présente
-  (colonnes en plus tolérées) ; ordre comparé seulement si la question l'implique ; valeurs
-  normalisées (`"10"`, `10` et `10.00` égaux, arrondi à 2 décimales).
+  référence, pas le texte SQL. Même nombre de lignes, sauf pour les questions de classement où
+  des lignes en plus à la fin sont tolérées (un top 3 dont le premier est le bon répond à
+  « quel artiste… ? ») ; chaque colonne de la référence présente (colonnes en plus tolérées) ;
+  ordre comparé seulement si la question l'implique ; valeurs normalisées (`"10"`, `10` et
+  `10.00` égaux, arrondi à 2 décimales). Le résultat noté est celui de la requête que l'agent
+  présente dans sa réponse, retrouvée parmi les requêtes réellement exécutées (à défaut, la
+  dernière réussie) : une requête de vérification lancée après coup ne la remplace pas.
 - **Abstention** : sur une question sans réponse, l'agent (prompt `v1`) doit commencer sa
   réponse par `[SANS_REPONSE]` ; le marqueur sur une question répondable est un faux refus.
 - **Latence et coût** par question (tarifs publics, réflexion comprise).
 - **pass^k** (et pass@k) sur les questions difficiles posées *k* fois : la fiabilité.
 
 Un oracle simulé (`OracleAnthropic`) permet une répétition à blanc du harnais et du notebook,
-sans API ni coût.
+sans API ni coût. Chaque enregistrement garde la trace complète de l'agent : `regrade()` re-note
+une évaluation passée après un changement de règle, sans rappeler l'API.
 
 ## Notebooks (playgrounds)
 

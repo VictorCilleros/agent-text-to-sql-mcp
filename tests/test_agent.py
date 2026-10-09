@@ -17,7 +17,15 @@ from mcp import Client
 from mcp.types import Implementation
 from pydantic import ValidationError
 
-from text_to_sql_mcp.agent import AgentResult, ask, available_prompts, load_prompt, run_agent
+from text_to_sql_mcp.agent import (
+    AgentResult,
+    ToolCall,
+    ask,
+    available_prompts,
+    load_prompt,
+    run_agent,
+    select_answer_query,
+)
 from text_to_sql_mcp.agent.boucle import (
     LAST_TURN_NOTICE,
     STATUS_BY_STOP_REASON,
@@ -140,6 +148,47 @@ def test_exception_unique_extraite_d_un_groupe_imbrique() -> None:
     assert _single_exception(ExceptionGroup("deux", [erreur, ValueError()])) is None
 
 
+def appel_requete(sql: str, *, erreur: bool = False) -> ToolCall:
+    return ToolCall(
+        name="run_query",
+        arguments={"sql": sql},
+        is_error=erreur,
+        duration_ms=1.0,
+        structured=None if erreur else {"executed_sql": f"{sql} LIMIT 101", "rows": []},
+    )
+
+
+PRINCIPALE = appel_requete("SELECT c.first_name FROM customer c WHERE c.country = 'France'")
+VERIFICATION = appel_requete("SELECT name FROM genre")
+
+
+@pytest.mark.parametrize(
+    ("reponse", "attendu"),
+    [
+        # SQL réécrit (alias, casse, espaces, LIMIT des garde-fous) : reconnu.
+        (
+            "Voici.\n```sql\nselect c.first_name\nfrom customer as c\n"
+            "where c.country = 'France' limit 101\n```",
+            (PRINCIPALE, "presented"),
+        ),
+        # Bloc sans langage précisé : reconnu aussi.
+        ("```\nSELECT name FROM genre\n```", (VERIFICATION, "presented")),
+        # Aucun bloc, ou un bloc qui n'a jamais été exécuté : dernière requête réussie.
+        ("Pas de SQL affiché.", (VERIFICATION, "last_successful")),
+        ("```sql\nSELECT 42\n```", (VERIFICATION, "last_successful")),
+        ("```sql\nSQL illisible (((\n```", (VERIFICATION, "last_successful")),
+    ],
+)
+def test_select_answer_query(reponse: str, attendu: tuple) -> None:
+    assert select_answer_query([PRINCIPALE, VERIFICATION], reponse) == attendu
+
+
+def test_select_answer_query_ignore_les_echecs() -> None:
+    echec = appel_requete("SELECT name FROM genre", erreur=True)
+    assert select_answer_query([echec], "```sql\nSELECT name FROM genre\n```") == (None, None)
+    assert select_answer_query([], "rien") == (None, None)
+
+
 def test_reglages_agent_cle_obligatoire_et_masquee(monkeypatch: pytest.MonkeyPatch) -> None:
     from text_to_sql_mcp.config import AgentSettings
 
@@ -236,6 +285,30 @@ class TestBoucle:
         # Le SQL retenu est celui de la dernière requête réussie.
         assert resultat.executed_sql == "SELECT name FROM genre LIMIT 2"
         assert resultat.rows == [["Rock"], ["Jazz"]]
+
+    async def test_requete_presentee_retenue_malgre_une_verification(self) -> None:
+        """Règle B : une requête de vérification après la réponse ne la remplace pas."""
+        resultat, _ = await jouer(
+            [
+                message(
+                    outil("run_query", "t1", sql="SELECT name FROM genre WHERE genre_id = 2"),
+                    stop_reason="tool_use",
+                ),
+                message(
+                    outil("run_query", "t2", sql="SELECT COUNT(*) FROM genre"),
+                    stop_reason="tool_use",
+                ),
+                message(
+                    texte(
+                        "C'est Jazz.\n"
+                        "```sql\nSELECT name FROM genre WHERE genre_id = 2 LIMIT 101\n```"
+                    ),
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
+        assert resultat.rows == [["Jazz"]]
+        assert resultat.selected_query == "presented"
 
     async def test_refus_des_garde_fous_renvoye_au_modele(self) -> None:
         resultat, requetes = await jouer(

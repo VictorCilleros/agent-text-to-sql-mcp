@@ -2,13 +2,19 @@
 
 Règles de l'execution accuracy (on compare des **résultats**, jamais le texte SQL) :
 
-- même nombre de lignes que la référence ;
+- même nombre de lignes que la référence ; exception pour les questions de classement
+  (`GoldQuestion.ordered`) : des lignes **en trop à la fin** ne sont pas une faute (« quel
+  artiste a le plus vendu ? » répondu par un top 3 dont le premier est le bon), on compare le
+  début du résultat ;
 - chaque colonne de la référence doit se retrouver dans le résultat de l'agent, quels que soient
   son nom et sa position ; les colonnes **en trop** ne sont pas une faute ;
 - l'ordre des lignes ne compte que si la question l'implique (`GoldQuestion.ordered`) ;
 - les valeurs sont normalisées avant comparaison : le texte `"10"`, l'entier `10` et le
   décimal `10.00` sont égaux ; les nombres sont arrondis à 2 décimales ; une date-heure à minuit
   (`2025-01-01T00:00:00`) vaut la date `2025-01-01`.
+
+Le résultat noté est celui de la requête que l'agent présente dans sa réponse, choisie parmi
+les requêtes réellement exécutées (`AgentResult.rows`, voir `agent.select_answer_query`).
 
 Questions sans réponse : l'agent doit commencer sa réponse par `ABSTENTION_MARKER` (consigne du
 prompt v1). Le marqueur sur une question répondable est un faux refus.
@@ -98,6 +104,9 @@ def compare_results(
     valeurs concordent ; on essaie toutes les associations possibles, puis on vérifie les
     lignes entières (une à une si `ordered`, comme des multiensembles sinon).
 
+    Si `ordered`, les lignes de l'agent au-delà du nombre de lignes de la référence sont
+    ignorées : seul le début du classement est comparé.
+
     Args:
         expected: Lignes de la référence.
         obtained: Lignes de l'agent.
@@ -107,6 +116,8 @@ def compare_results(
         `ok`, ou le motif de l'écart : `nb_lignes`, `colonnes` (il en manque), `ordre` (bonnes
         lignes, mauvais ordre) ou `valeurs`.
     """
+    if ordered and expected and len(obtained) > len(expected):
+        obtained = obtained[: len(expected)]
     if len(expected) != len(obtained):
         return "nb_lignes"
     if not expected:

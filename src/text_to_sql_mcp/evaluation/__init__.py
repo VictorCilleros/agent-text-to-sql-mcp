@@ -22,6 +22,8 @@ from text_to_sql_mcp.evaluation.runner import (
     evaluate,
     load_records,
     new_run_id,
+    regrade,
+    save_records,
 )
 from text_to_sql_mcp.evaluation.simulation import OracleAnthropic
 
@@ -44,5 +46,7 @@ __all__ = [
     "normalize_value",
     "pass_at_k",
     "pass_hat_k",
+    "regrade",
+    "save_records",
     "wilson_interval",
 ]

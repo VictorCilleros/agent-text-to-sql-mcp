@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from text_to_sql_mcp.agent import AgentResult, load_prompt
+from text_to_sql_mcp.agent import AgentResult, ToolCall, load_prompt
 from text_to_sql_mcp.evaluation import (
     ABSTENTION_MARKER,
     GoldQuestion,
@@ -21,8 +21,11 @@ from text_to_sql_mcp.evaluation import (
     normalize_value,
     pass_at_k,
     pass_hat_k,
+    regrade,
+    save_records,
     wilson_interval,
 )
+from text_to_sql_mcp.evaluation.runner import EvalRecord
 
 # --- Gold set -----------------------------------------------------------------------------------
 
@@ -84,6 +87,10 @@ REFERENCE = [["USA", 13], ["Canada", 8], ["France", 5]]
         ([["Canada", 8], ["USA", 13], ["France", 5]], True, "ordre"),
         ([["USA"], ["Canada"], ["France"]], True, "colonnes"),
         (REFERENCE[:2], True, "nb_lignes"),
+        # Règle A : classement, lignes en trop à la fin tolérées ; pas au début, ni sans ordre.
+        ([*REFERENCE, ["Brazil", 5]], True, "ok"),
+        ([["Germany", 4], *REFERENCE], True, "valeurs"),
+        ([*REFERENCE, ["Brazil", 5]], False, "nb_lignes"),
         ([["USA", 13], ["Canada", 8], ["Brazil", 5]], True, "valeurs"),
         # Les colonnes concordent une à une, mais pas les lignes : valeurs mal associées.
         ([["USA", 8], ["Canada", 13], ["France", 5]], False, "valeurs"),
@@ -171,6 +178,87 @@ def test_motif_de_la_premiere_reference_en_cas_d_echec() -> None:
 def test_grade(question: GoldQuestion, agent: AgentResult, attendu: tuple) -> None:
     verdict = grade(question, agent, [[[1]], [[2]]] if question.answerable else [])
     assert (verdict.correct, verdict.reason) == attendu
+
+
+def test_premier_resultat_vide_vs_reference_vide() -> None:
+    """Une référence vide n'accepte pas de lignes en trop, même ordonnée."""
+    assert compare_results([], [["x"]], ordered=True) == "nb_lignes"
+
+
+# --- Re-notation ----------------------------------------------------------------------------------
+
+
+def requete(sql: str, rows: list) -> ToolCall:
+    return ToolCall(
+        name="run_query",
+        arguments={"sql": sql},
+        is_error=False,
+        duration_ms=1.0,
+        structured={
+            "executed_sql": f"{sql} LIMIT 101",
+            "columns": ["x"],
+            "rows": rows,
+            "row_count": len(rows),
+            "truncated": False,
+            "row_cap": 100,
+        },
+    )
+
+
+def enregistrement_ancien(agent: AgentResult) -> EvalRecord:
+    """Enregistrement noté avec l'ancienne règle (dernière requête réussie)."""
+    return EvalRecord(
+        run_id="r",
+        question_id="q1",
+        question="q",
+        difficulty="facile",
+        answerable=True,
+        repetition=1,
+        model="m",
+        prompt="v1",
+        correct=False,
+        reason="nb_lignes",
+        reference_index=None,
+        status="ok",
+        error=None,
+        turns=3,
+        tool_errors=0,
+        input_tokens=1000,
+        output_tokens=100,
+        cost_usd=0.01,
+        duration_s=2.0,
+        executed_sql=agent.executed_sql,
+        answer=agent.answer,
+        agent=agent,
+    )
+
+
+def test_regrade_retient_la_requete_presentee() -> None:
+    """Cas réel de l'évaluation 2 : requête de vérification lancée après la vraie réponse."""
+    principale, verification = requete("SELECT 1", [[1]]), requete("SELECT 2", [[7], [8]])
+    agent = resultat(
+        answer="La réponse est 1.\n```sql\nselect 1 limit 101\n```", rows=[[7], [8]]
+    ).model_copy(update={"tool_calls": [principale, verification], "executed_sql": "SELECT 2"})
+    ancien = enregistrement_ancien(agent)
+    (nouveau,) = regrade([ancien], [REPONDABLE], {"q1": [[[1]], [[2]]]})
+    assert (nouveau.correct, nouveau.reason, nouveau.reference_index) == (True, "ok", 0)
+    assert nouveau.executed_sql == "SELECT 1 LIMIT 101"
+    assert nouveau.agent.selected_query == "presented"
+    assert (nouveau.cost_usd, nouveau.duration_s) == (0.01, 2.0)  # inchangés
+    assert ancien.correct is False  # l'original n'est pas modifié
+
+
+def test_regrade_garde_les_erreurs_agent() -> None:
+    erreur = enregistrement_ancien(resultat()).model_copy(
+        update={"agent": None, "reason": "erreur_agent", "error": "API injoignable"}
+    )
+    assert regrade([erreur], [REPONDABLE], {"q1": [[[1]]]}) == [erreur]
+
+
+def test_save_records_relu_a_l_identique(tmp_path: Path) -> None:
+    e = enregistrement_ancien(resultat(rows=[[1]]))
+    save_records([e, e], tmp_path / "sous_dossier" / "eval.jsonl")
+    assert load_records(tmp_path / "sous_dossier" / "eval.jsonl") == [e, e]
 
 
 # --- Métriques ----------------------------------------------------------------------------------
