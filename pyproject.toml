@@ -7,11 +7,17 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=1.12.1",
     "mcp[cli]>=2,<3",
     "psycopg[binary]>=3.3.6",
     "pydantic-settings>=2.15.0",
     "sqlglot>=30.21.0",
 ]
+
+[project.scripts]
+# Commandes installées dans .venv/bin par `uv sync`.
+text-to-sql-mcp = "text_to_sql_mcp.server:main"    # serveur MCP sur stdio
+text-to-sql-agent = "text_to_sql_mcp.cli:main"     # agent : une question, une réponse
 
 [dependency-groups]
 dev = [
@@ -50,9 +56,10 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 
 # --- Pytest -------------------------------------------------------------------
 [tool.pytest.ini_options]
- markers = [
-       "integration: nécessite la base PostgreSQL (docker compose up -d) ; exclure avec -m 'not integration'",
-   ]
+markers = [
+    "integration: nécessite la base PostgreSQL (docker compose up -d) ; exclure avec -m 'not integration'",
+    "api: appelle la vraie API Anthropic (payant) ; sautés sauf avec l'option --api",
+]
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers"]
 # Toute API MCP dépréciée (spec 2026-07-28) fait échouer les tests.

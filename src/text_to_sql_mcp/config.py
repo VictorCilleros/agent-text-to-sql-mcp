@@ -59,6 +59,33 @@ class Settings(BaseSettings):
         )
 
 
+class AgentSettings(BaseSettings):
+    """Réglages de l'agent (processus client), distincts de ceux du serveur MCP.
+
+    Chaque processus ne valide que ce dont il a besoin : le serveur ne réclame jamais la clé
+    Anthropic, l'agent ne réclame jamais le mot de passe de la base. Même source que
+    `Settings` : variables d'environnement, puis fichier .env du répertoire courant.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    anthropic_api_key: SecretStr
+    agent_model: str = Field(
+        default="claude-sonnet-5-5",
+        description="Identifiant du modèle ; l'API refuse elle-même un identifiant inconnu.",
+    )
+    agent_prompt: str = Field(
+        default="v0", description="Nom du prompt système (fichier agent/prompts/<nom>.md)."
+    )
+    agent_max_turns: int = Field(
+        default=10, ge=1, le=50, description="Nombre maximal d'appels à l'API par question."
+    )
+    agent_max_tokens: int = Field(
+        default=8000, ge=1, description="Plafond de tokens de sortie par appel à l'API."
+    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+
 @cache
 def get_settings() -> Settings:
     """Renvoie les réglages, lus une seule fois puis mis en cache.
@@ -67,3 +94,13 @@ def get_settings() -> Settings:
         L'instance unique de `Settings`.
     """
     return Settings()
+
+
+@cache
+def get_agent_settings() -> AgentSettings:
+    """Renvoie les réglages de l'agent, lus une seule fois puis mis en cache.
+
+    Returns:
+        L'instance unique de `AgentSettings`.
+    """
+    return AgentSettings()
