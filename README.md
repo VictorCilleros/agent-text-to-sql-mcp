@@ -3,15 +3,15 @@
 Un agent qui traduit des questions métier en langage naturel en **requêtes SQL sûres**, exposé à Claude
 via un **serveur MCP maison**, avec un **harnais d'évaluation** comparant prompts et modèles.
 
-> **Statut :** en construction, jalon 2. Le serveur MCP en lecture seule, ses garde-fous et
-> l'agent (boucle tool use + CLI) sont en place et testés ; prochaine étape : le harnais
-> d'évaluation (jalon 3).
+> **Statut :** en construction, jalon 3. Le serveur MCP en lecture seule, ses garde-fous,
+> l'agent (boucle tool use + CLI) et le harnais d'évaluation sont en place et testés ; première
+> évaluation à lancer (`notebooks/06_evaluation.ipynb`).
 
 ## Feuille de route
 
 1. ✅ Serveur MCP minimal (`list_tables`, `get_schema`, `run_query`) en lecture seule sur Chinook
-2. 🚧 Agent text-to-SQL + garde-fous (rôle lecture seule, validation sqlglot, `LIMIT`, timeout)
-3. Harnais d'évaluation : gold set, execution accuracy, comparaison de variantes, mini red-team
+2. ✅ Agent text-to-SQL + garde-fous (rôle lecture seule, validation sqlglot, `LIMIT`, timeout)
+3. 🚧 Harnais d'évaluation : gold set, execution accuracy, comparaison de variantes, mini red-team
 4. Documentation, rapport d'évaluation et démo (Claude Desktop / Claude Code)
 
 ## Stack
@@ -133,6 +133,33 @@ une ligne `fin_agent` (bilan), sur stderr. Leur champ `client`
 (`text-to-sql-agent:<modèle>:<prompt>/<version>`) est le même que celui des lignes `appel_outil`
 du serveur : une question se suit d'un flux à l'autre.
 
+## Évaluation
+
+Le harnais (`src/text_to_sql_mcp/evaluation/`) pose chaque question du gold set à l'agent, note
+la réponse et écrit un enregistrement JSONL par réponse dans `evals/resultats/`. Le notebook
+`06_evaluation.ipynb` lance les évaluations et affiche les résultats (plotly).
+
+**Gold set** (`evaluation/gold_chinook.toml`) : 44 questions en français, adaptées du dataset
+*Chinook gold* du projet [nl2sql](https://github.com/nadeem4/nl2sql) (licence MIT, voir
+`evaluation/LICENSE-gold-nl2sql.md`) : 39 questions répondables (faciles, moyennes,
+difficiles) et 5 questions sans réponse. Le SQL a été traduit vers PostgreSQL snake_case, les
+dates décalées de +12 ans (Chinook v1.4.5), et chaque traduction vérifiée contre le résultat
+publié par la source.
+
+**Métriques**
+
+- **Execution accuracy** : on compare le résultat de l'agent à celui d'une requête de
+  référence, pas le texte SQL. Même nombre de lignes ; chaque colonne de la référence présente
+  (colonnes en plus tolérées) ; ordre comparé seulement si la question l'implique ; valeurs
+  normalisées (`"10"`, `10` et `10.00` égaux, arrondi à 2 décimales).
+- **Abstention** : sur une question sans réponse, l'agent (prompt `v1`) doit commencer sa
+  réponse par `[SANS_REPONSE]` ; le marqueur sur une question répondable est un faux refus.
+- **Latence et coût** par question (tarifs publics, réflexion comprise).
+- **pass^k** (et pass@k) sur les questions difficiles posées *k* fois : la fiabilité.
+
+Un oracle simulé (`OracleAnthropic`) permet une répétition à blanc du harnais et du notebook,
+sans API ni coût.
+
 ## Notebooks (playgrounds)
 
 Le dossier `notebooks/` contient les essais qui précèdent chaque incrément de code, avec le kernel
@@ -145,8 +172,9 @@ du `.venv` :
 | `03_playground_garde_fous.ipynb` | validation sqlglot et contournements testés |
 | `04_playground_agent.ipynb` | boucle tool use, `tool_runner`, comparaison de modèles |
 | `05_playground_boucle_agent.ipynb` | boucle avec dépendances injectées, faux client, statuts |
+| `06_evaluation.ipynb` | évaluation 1 (justesse, abstention, latence, coût) et 2 (pass^k) |
 
-Les notebooks 04 et 05 appellent l'API Anthropic : ils attendent `ANTHROPIC_API_KEY` dans le
+Les notebooks 04 à 06 appellent l'API Anthropic : ils attendent `ANTHROPIC_API_KEY` dans le
 `.env` (jamais commité) et consomment des tokens.
 
 ## Licence

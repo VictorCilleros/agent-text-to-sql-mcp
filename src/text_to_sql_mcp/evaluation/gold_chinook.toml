@@ -1,0 +1,670 @@
+# Gold set de l'agent text-to-SQL sur Chinook (PostgreSQL, identifiants snake_case).
+#
+# Source : 43 questions du dataset « Chinook gold » du projet nl2sql
+#   https://github.com/nadeem4/nl2sql — packages/nl2sql/src/nl2sql/evaluation/datasets/chinook_gold.yaml
+#   commit 201f99fa94ac2e8283572bfa7a22f62366314e2a, licence MIT, © 2026 The NL2SQL Platform Authors
+#   (voir LICENSE-gold-nl2sql.md à côté de ce fichier).
+# Ajout maison : chinook_044 (sans réponse).
+#
+# Transformations par rapport à la source :
+# - questions traduites en français (`question`), originale conservée (`question_en`) ;
+#   noms de pays traduits, titres d'albums, d'artistes et de playlists laissés tels quels ;
+# - SQL traduit de SQLite (PascalCase) vers PostgreSQL (snake_case). Chinook v1.4.5 pour
+#   PostgreSQL décale les dates de +12 ans (2021-2025 au lieu de 2009-2013) : les années des
+#   questions sont décalées d'autant. Chaque traduction fidèle a été vérifiée : elle redonne
+#   exactement le `gold_result` publié par la source ;
+# - références réduites aux colonnes qui répondent à la question : l'agent peut en ajouter
+#   (une colonne en trop n'est pas une faute), pas en omettre ;
+# - plusieurs références quand plusieurs formes de réponse sont justes (nom complet en une ou
+#   deux colonnes, mois en texte, en date ou en numéro, ex aequo) : il suffit d'en égaler une ;
+# - étiquettes de contrôle d'accès de la source (`rbac-denial`, `expected`) retirées.
+#
+# Champs :
+#   id, question, question_en, difficulty (facile | moyen | difficile), tags,
+#   ordered (true : l'ordre des lignes fait partie de la réponse ; défaut false),
+#   answerable (false : la base ne contient pas l'information, l'agent doit le dire ;
+#   défaut true), references (requêtes SQL de référence ; vide si answerable = false).
+
+[[question]]
+id = "chinook_001"
+question = "Combien avons-nous de clients par pays ?"
+question_en = "How many customers do we have, by country?"
+difficulty = "facile"
+tags = ["aggregation"]
+ordered = false
+references = ['''
+SELECT country, COUNT(*) AS nb_clients FROM customer GROUP BY country
+''']
+
+[[question]]
+id = "chinook_002"
+question = "Quels sont les 5 clients qui ont le plus dépensé au total ?"
+question_en = "Who are the top 5 customers by total spend?"
+difficulty = "moyen"
+tags = ["join", "aggregation", "order-limit", "paraphrase"]
+ordered = false
+references = ['''
+SELECT c.first_name, c.last_name
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id ORDER BY SUM(i.total) DESC, c.customer_id LIMIT 5
+''', '''
+SELECT c.first_name || ' ' || c.last_name AS client
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id ORDER BY SUM(i.total) DESC, c.customer_id LIMIT 5
+''']
+
+[[question]]
+id = "chinook_003"
+question = "Quel artiste a le plus d'albums ?"
+question_en = "Which artist has the most albums?"
+difficulty = "facile"
+tags = ["join", "aggregation", "order-limit", "paraphrase"]
+ordered = true
+references = ['''
+SELECT ar.name
+FROM artist ar JOIN album al ON al.artist_id = ar.artist_id
+GROUP BY ar.artist_id ORDER BY COUNT(al.album_id) DESC, ar.artist_id LIMIT 1
+''']
+
+[[question]]
+id = "chinook_004"
+question = "Quel est le chiffre d'affaires total par année ?"
+question_en = "What is the total revenue per year?"
+difficulty = "moyen"
+tags = ["aggregation", "date", "paraphrase"]
+ordered = false
+references = ['''
+SELECT EXTRACT(YEAR FROM invoice_date) AS annee, SUM(total) AS chiffre_affaires
+FROM invoice GROUP BY 1
+''', '''
+SELECT date_trunc('year', invoice_date) AS annee, SUM(total) AS chiffre_affaires
+FROM invoice GROUP BY 1
+''']
+
+[[question]]
+id = "chinook_005"
+question = "Quel genre vend le plus de pistes ?"
+question_en = "Which genre sells the most tracks?"
+difficulty = "moyen"
+tags = ["multi-join", "aggregation", "order-limit"]
+ordered = true
+references = ['''
+SELECT g.name
+FROM invoice_line il
+JOIN track t ON t.track_id = il.track_id
+JOIN genre g ON g.genre_id = t.genre_id
+GROUP BY g.genre_id ORDER BY SUM(il.quantity) DESC, g.genre_id LIMIT 1
+''']
+
+[[question]]
+id = "chinook_006"
+question = "Quel est le montant moyen d'une facture par pays de facturation ?"
+question_en = "What is the average invoice total by billing country?"
+difficulty = "facile"
+tags = ["aggregation"]
+ordered = false
+references = ['''
+SELECT billing_country, AVG(total) AS montant_moyen FROM invoice GROUP BY billing_country
+''']
+
+[[question]]
+id = "chinook_007"
+question = "Quels employés suivent le plus de clients ?"
+question_en = "Which employees support the most customers?"
+difficulty = "moyen"
+tags = ["join", "aggregation"]
+ordered = true
+references = ['''
+SELECT e.first_name, e.last_name
+FROM employee e JOIN customer c ON c.support_rep_id = e.employee_id
+GROUP BY e.employee_id ORDER BY COUNT(c.customer_id) DESC, e.employee_id
+''', '''
+SELECT e.first_name || ' ' || e.last_name AS employe
+FROM employee e JOIN customer c ON c.support_rep_id = e.employee_id
+GROUP BY e.employee_id ORDER BY COUNT(c.customer_id) DESC, e.employee_id
+''', '''
+SELECT e.first_name, e.last_name
+FROM employee e JOIN customer c ON c.support_rep_id = e.employee_id
+GROUP BY e.employee_id ORDER BY COUNT(c.customer_id) DESC, e.employee_id LIMIT 1
+''', '''
+SELECT e.first_name || ' ' || e.last_name AS employe
+FROM employee e JOIN customer c ON c.support_rep_id = e.employee_id
+GROUP BY e.employee_id ORDER BY COUNT(c.customer_id) DESC, e.employee_id LIMIT 1
+''']
+
+[[question]]
+id = "chinook_008"
+question = "Quelle est la piste la plus longue de chaque genre ?"
+question_en = "What is the longest track in each genre?"
+difficulty = "difficile"
+tags = ["join", "aggregation"]
+ordered = false
+references = ['''
+SELECT genre, piste FROM (
+    SELECT g.name AS genre, t.name AS piste,
+           ROW_NUMBER() OVER (PARTITION BY g.genre_id ORDER BY t.milliseconds DESC, t.track_id) AS rang
+    FROM track t JOIN genre g ON g.genre_id = t.genre_id
+) AS classement
+WHERE rang = 1
+''']
+
+[[question]]
+id = "chinook_009"
+question = "Quels clients ont acheté des pistes de jazz mais jamais de rock ?"
+question_en = "Which customers bought jazz tracks but never rock?"
+difficulty = "difficile"
+tags = ["multi-join", "filter", "empty-result"]
+ordered = false
+references = ['''
+WITH achats AS (
+    SELECT DISTINCT i.customer_id, g.name AS genre
+    FROM invoice i
+    JOIN invoice_line il ON il.invoice_id = i.invoice_id
+    JOIN track t ON t.track_id = il.track_id
+    JOIN genre g ON g.genre_id = t.genre_id
+)
+SELECT c.first_name, c.last_name
+FROM customer c
+WHERE c.customer_id IN (SELECT customer_id FROM achats WHERE genre = 'Jazz')
+  AND c.customer_id NOT IN (SELECT customer_id FROM achats WHERE genre = 'Rock')
+''']
+
+[[question]]
+id = "chinook_010"
+question = "Quel a été le chiffre d'affaires mensuel en 2025 pour les clients situés aux États-Unis ?"
+question_en = "What was the monthly revenue in 2013 for customers in the USA?"
+difficulty = "moyen"
+tags = ["join", "aggregation", "date", "filter"]
+ordered = false
+references = ['''
+SELECT to_char(i.invoice_date, 'YYYY-MM') AS mois, SUM(i.total) AS chiffre_affaires
+FROM invoice i JOIN customer c ON c.customer_id = i.customer_id
+WHERE c.country = 'USA' AND i.invoice_date >= '2025-01-01' AND i.invoice_date < '2026-01-01'
+GROUP BY 1
+''', '''
+SELECT date_trunc('month', i.invoice_date) AS mois, SUM(i.total) AS chiffre_affaires
+FROM invoice i JOIN customer c ON c.customer_id = i.customer_id
+WHERE c.country = 'USA' AND i.invoice_date >= '2025-01-01' AND i.invoice_date < '2026-01-01'
+GROUP BY 1
+''', '''
+SELECT EXTRACT(MONTH FROM i.invoice_date) AS mois, SUM(i.total) AS chiffre_affaires
+FROM invoice i JOIN customer c ON c.customer_id = i.customer_id
+WHERE c.country = 'USA' AND i.invoice_date >= '2025-01-01' AND i.invoice_date < '2026-01-01'
+GROUP BY 1
+''']
+
+[[question]]
+id = "chinook_011"
+question = "Quelles playlists contiennent des pistes de plus de trois genres ?"
+question_en = "Which playlists contain tracks from more than three genres?"
+difficulty = "difficile"
+tags = ["multi-join", "aggregation", "having"]
+ordered = false
+references = ['''
+SELECT p.name
+FROM playlist p
+JOIN playlist_track pt ON pt.playlist_id = p.playlist_id
+JOIN track t ON t.track_id = pt.track_id
+GROUP BY p.playlist_id HAVING COUNT(DISTINCT t.genre_id) > 3
+''', '''
+SELECT DISTINCT p.name
+FROM playlist p
+JOIN playlist_track pt ON pt.playlist_id = p.playlist_id
+JOIN track t ON t.track_id = pt.track_id
+GROUP BY p.playlist_id HAVING COUNT(DISTINCT t.genre_id) > 3
+''']
+
+[[question]]
+id = "chinook_012"
+question = "Qui sont nos meilleurs clients en dépense totale ?"
+question_en = "Who are the top customers by total spend?"
+difficulty = "moyen"
+tags = ["join", "aggregation", "order-limit", "paraphrase"]
+ordered = false
+references = ['''
+SELECT c.first_name, c.last_name
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id ORDER BY SUM(i.total) DESC, c.customer_id LIMIT 5
+''', '''
+SELECT c.first_name || ' ' || c.last_name AS client
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id ORDER BY SUM(i.total) DESC, c.customer_id LIMIT 5
+''']
+
+[[question]]
+id = "chinook_013"
+question = "Montre-moi les cinq clients qui ont dépensé le plus d'argent."
+question_en = "Show me the five customers who have spent the most money."
+difficulty = "moyen"
+tags = ["join", "aggregation", "order-limit", "paraphrase"]
+ordered = false
+references = ['''
+SELECT c.first_name, c.last_name
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id ORDER BY SUM(i.total) DESC, c.customer_id LIMIT 5
+''', '''
+SELECT c.first_name || ' ' || c.last_name AS client
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id ORDER BY SUM(i.total) DESC, c.customer_id LIMIT 5
+''']
+
+[[question]]
+id = "chinook_014"
+question = "Combien avons-nous gagné chaque année ?"
+question_en = "How much did we earn in each year?"
+difficulty = "moyen"
+tags = ["aggregation", "date", "paraphrase"]
+ordered = false
+references = ['''
+SELECT EXTRACT(YEAR FROM invoice_date) AS annee, SUM(total) AS chiffre_affaires
+FROM invoice GROUP BY 1
+''', '''
+SELECT date_trunc('year', invoice_date) AS annee, SUM(total) AS chiffre_affaires
+FROM invoice GROUP BY 1
+''']
+
+[[question]]
+id = "chinook_015"
+question = "Donne-moi le total des ventes par année."
+question_en = "Give me the yearly sales totals."
+difficulty = "moyen"
+tags = ["aggregation", "date", "paraphrase"]
+ordered = false
+references = ['''
+SELECT EXTRACT(YEAR FROM invoice_date) AS annee, SUM(total) AS chiffre_affaires
+FROM invoice GROUP BY 1
+''', '''
+SELECT date_trunc('year', invoice_date) AS annee, SUM(total) AS chiffre_affaires
+FROM invoice GROUP BY 1
+''']
+
+[[question]]
+id = "chinook_016"
+question = "Nomme l'artiste qui a le plus grand nombre d'albums."
+question_en = "Name the artist with the largest number of albums."
+difficulty = "facile"
+tags = ["join", "aggregation", "order-limit", "paraphrase"]
+ordered = true
+references = ['''
+SELECT ar.name
+FROM artist ar JOIN album al ON al.artist_id = ar.artist_id
+GROUP BY ar.artist_id ORDER BY COUNT(al.album_id) DESC, ar.artist_id LIMIT 1
+''']
+
+[[question]]
+id = "chinook_017"
+question = "Quel musicien a sorti plus d'albums que tous les autres dans le catalogue ?"
+question_en = "Which musician released more albums than anyone else in the catalog?"
+difficulty = "moyen"
+tags = ["join", "aggregation", "order-limit", "paraphrase"]
+ordered = true
+references = ['''
+SELECT ar.name
+FROM artist ar JOIN album al ON al.artist_id = ar.artist_id
+GROUP BY ar.artist_id ORDER BY COUNT(al.album_id) DESC, ar.artist_id LIMIT 1
+''']
+
+[[question]]
+id = "chinook_018"
+question = "Liste tous les types de médias."
+question_en = "List all the media types."
+difficulty = "facile"
+tags = ["single-table"]
+ordered = false
+references = ['''
+SELECT name FROM media_type
+''']
+
+[[question]]
+id = "chinook_019"
+question = "Combien de pistes durent plus de dix minutes ?"
+question_en = "How many tracks are longer than ten minutes?"
+difficulty = "facile"
+tags = ["filter", "aggregation"]
+ordered = false
+references = ['''
+SELECT COUNT(*) FROM track WHERE milliseconds > 600000
+''']
+
+[[question]]
+id = "chinook_020"
+question = "Quelles sont les pistes de l'album Let There Be Rock ?"
+question_en = "Which tracks are from the album Let There Be Rock?"
+difficulty = "facile"
+tags = ["join", "filter", "keyword-in-question"]
+ordered = false
+references = ['''
+SELECT t.name FROM track t JOIN album a ON a.album_id = t.album_id
+WHERE a.title = 'Let There Be Rock'
+''']
+
+[[question]]
+id = "chinook_021"
+question = "Où habitent nos clients d'Allemagne ?"
+question_en = "Where do our customers from Germany live?"
+difficulty = "facile"
+tags = ["filter", "keyword-in-question"]
+ordered = false
+references = ['''
+SELECT city FROM customer WHERE country = 'Germany'
+''', '''
+SELECT DISTINCT city FROM customer WHERE country = 'Germany'
+''']
+
+[[question]]
+id = "chinook_022"
+question = "Liste les clients dont le pays est le Canada, avec leur adresse e-mail."
+question_en = "List the customers where the country is Canada, with their email addresses."
+difficulty = "facile"
+tags = ["filter", "keyword-in-question"]
+ordered = false
+references = ['''
+SELECT first_name, last_name, email FROM customer WHERE country = 'Canada'
+''', '''
+SELECT first_name || ' ' || last_name AS client, email FROM customer WHERE country = 'Canada'
+''']
+
+[[question]]
+id = "chinook_023"
+question = "Combien de pistes compte l'album From The Muddy Banks Of The Wishkah [Live] ?"
+question_en = "How many tracks are on the album From The Muddy Banks Of The Wishkah [Live]?"
+difficulty = "facile"
+tags = ["join", "filter", "aggregation", "keyword-in-value"]
+ordered = false
+references = ['''
+SELECT COUNT(*) FROM track t JOIN album a ON a.album_id = t.album_id
+WHERE a.title = 'From The Muddy Banks Of The Wishkah [Live]'
+''']
+
+[[question]]
+id = "chinook_024"
+question = "Quel artiste a enregistré l'album Somewhere in Time ?"
+question_en = "Which artist recorded the album Somewhere in Time?"
+difficulty = "facile"
+tags = ["join", "filter", "keyword-in-value"]
+ordered = false
+references = ['''
+SELECT ar.name FROM album al JOIN artist ar ON ar.artist_id = al.artist_id
+WHERE al.title = 'Somewhere in Time'
+''']
+
+[[question]]
+id = "chinook_025"
+question = "Quels artistes ont plus de dix albums ?"
+question_en = "Which artists have more than ten albums?"
+difficulty = "moyen"
+tags = ["join", "aggregation", "having"]
+ordered = false
+references = ['''
+SELECT ar.name FROM artist ar JOIN album al ON al.artist_id = ar.artist_id
+GROUP BY ar.artist_id HAVING COUNT(al.album_id) > 10
+''']
+
+[[question]]
+id = "chinook_026"
+question = "Quels clients ont dépensé plus de 45 dollars au total ?"
+question_en = "Which customers have spent more than 45 dollars in total?"
+difficulty = "moyen"
+tags = ["join", "aggregation", "having"]
+ordered = false
+references = ['''
+SELECT c.first_name, c.last_name
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id HAVING SUM(i.total) > 45
+''', '''
+SELECT c.first_name || ' ' || c.last_name AS client
+FROM customer c JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY c.customer_id HAVING SUM(i.total) > 45
+''']
+
+[[question]]
+id = "chinook_027"
+question = "Combien de factures ont été émises en mars 2022 ?"
+question_en = "How many invoices were issued in March 2010?"
+difficulty = "facile"
+tags = ["date", "filter", "aggregation"]
+ordered = false
+references = ['''
+SELECT COUNT(*) FROM invoice
+WHERE invoice_date >= '2022-03-01' AND invoice_date < '2022-04-01'
+''']
+
+[[question]]
+id = "chinook_028"
+question = "Quel a été le chiffre d'affaires total du quatrième trimestre 2024 ?"
+question_en = "What was the total revenue in the fourth quarter of 2012?"
+difficulty = "moyen"
+tags = ["date", "filter", "aggregation"]
+ordered = false
+references = ['''
+SELECT SUM(total) FROM invoice
+WHERE invoice_date >= '2024-10-01' AND invoice_date < '2025-01-01'
+''']
+
+[[question]]
+id = "chinook_029"
+question = "Quel mois de 2023 a enregistré le plus gros chiffre d'affaires ?"
+question_en = "Which month of 2011 had the highest revenue?"
+difficulty = "moyen"
+tags = ["date", "aggregation", "order-limit"]
+ordered = true
+references = ['''
+SELECT to_char(invoice_date, 'YYYY-MM') AS mois FROM invoice
+WHERE invoice_date >= '2023-01-01' AND invoice_date < '2024-01-01'
+GROUP BY 1 ORDER BY SUM(total) DESC LIMIT 1
+''', '''
+SELECT date_trunc('month', invoice_date) AS mois FROM invoice
+WHERE invoice_date >= '2023-01-01' AND invoice_date < '2024-01-01'
+GROUP BY 1 ORDER BY SUM(total) DESC LIMIT 1
+''', '''
+SELECT EXTRACT(MONTH FROM invoice_date) AS mois FROM invoice
+WHERE invoice_date >= '2023-01-01' AND invoice_date < '2024-01-01'
+GROUP BY 1 ORDER BY SUM(total) DESC LIMIT 1
+''', '''
+SELECT to_char(invoice_date, 'FMMonth') AS mois FROM invoice
+WHERE invoice_date >= '2023-01-01' AND invoice_date < '2024-01-01'
+GROUP BY 1 ORDER BY SUM(total) DESC LIMIT 1
+''']
+
+[[question]]
+id = "chinook_030"
+question = "Quels sont les 3 pays qui comptent le plus de clients ?"
+question_en = "What are the top 3 countries by number of customers?"
+difficulty = "facile"
+tags = ["aggregation", "order-limit", "ties"]
+ordered = true
+# Brésil et France sont ex aequo à la 3e place (5 clients) : l'un, l'autre, ou les deux.
+references = ['''
+SELECT country FROM customer GROUP BY country ORDER BY COUNT(*) DESC, country LIMIT 3
+''', '''
+SELECT country FROM customer GROUP BY country ORDER BY COUNT(*) DESC, country DESC LIMIT 3
+''', '''
+SELECT country FROM (
+    SELECT country, COUNT(*) AS nb, RANK() OVER (ORDER BY COUNT(*) DESC) AS rang
+    FROM customer GROUP BY country
+) AS classement
+WHERE rang <= 3 ORDER BY nb DESC, country
+''']
+
+[[question]]
+id = "chinook_031"
+question = "Quel est le chiffre d'affaires total par genre ?"
+question_en = "What is the total revenue per genre?"
+difficulty = "moyen"
+tags = ["multi-join", "aggregation"]
+ordered = false
+references = ['''
+SELECT g.name, SUM(il.unit_price * il.quantity) AS chiffre_affaires
+FROM invoice_line il
+JOIN track t ON t.track_id = il.track_id
+JOIN genre g ON g.genre_id = t.genre_id
+GROUP BY g.genre_id
+''']
+
+[[question]]
+id = "chinook_032"
+question = "Quel artiste a généré le plus de chiffre d'affaires ?"
+question_en = "Which artist has earned the most revenue?"
+difficulty = "difficile"
+tags = ["multi-join", "aggregation", "order-limit"]
+ordered = true
+references = ['''
+SELECT ar.name
+FROM invoice_line il
+JOIN track t ON t.track_id = il.track_id
+JOIN album al ON al.album_id = t.album_id
+JOIN artist ar ON ar.artist_id = al.artist_id
+GROUP BY ar.artist_id ORDER BY SUM(il.unit_price * il.quantity) DESC, ar.artist_id LIMIT 1
+''']
+
+[[question]]
+id = "chinook_033"
+question = "Combien de pistes de chaque type de média contient la playlist Grunge ?"
+question_en = "How many tracks of each media type are in the Grunge playlist?"
+difficulty = "moyen"
+tags = ["multi-join", "filter", "aggregation"]
+ordered = false
+references = ['''
+SELECT m.name, COUNT(*) AS nb_pistes
+FROM playlist p
+JOIN playlist_track pt ON pt.playlist_id = p.playlist_id
+JOIN track t ON t.track_id = pt.track_id
+JOIN media_type m ON m.media_type_id = t.media_type_id
+WHERE p.name = 'Grunge'
+GROUP BY m.media_type_id
+''']
+
+[[question]]
+id = "chinook_034"
+question = "Combien de clients différents ont acheté au moins une piste d'AC/DC ?"
+question_en = "How many different customers bought at least one track by AC/DC?"
+difficulty = "difficile"
+tags = ["multi-join", "filter", "aggregation"]
+ordered = false
+references = ['''
+SELECT COUNT(DISTINCT i.customer_id)
+FROM invoice i
+JOIN invoice_line il ON il.invoice_id = i.invoice_id
+JOIN track t ON t.track_id = il.track_id
+JOIN album al ON al.album_id = t.album_id
+JOIN artist ar ON ar.artist_id = al.artist_id
+WHERE ar.name = 'AC/DC'
+''']
+
+[[question]]
+id = "chinook_035"
+question = "Combien d'employés compte l'entreprise ?"
+question_en = "How many employees does the company have?"
+difficulty = "facile"
+tags = ["single-table", "aggregation"]
+ordered = false
+references = ['''
+SELECT COUNT(*) FROM employee
+''']
+
+[[question]]
+id = "chinook_036"
+question = "À qui Jane Peacock rend-elle compte ?"
+question_en = "Who does Jane Peacock report to?"
+difficulty = "moyen"
+tags = ["join", "filter"]
+ordered = false
+references = ['''
+SELECT m.first_name, m.last_name
+FROM employee e JOIN employee m ON m.employee_id = e.reports_to
+WHERE e.first_name = 'Jane' AND e.last_name = 'Peacock'
+''', '''
+SELECT m.first_name || ' ' || m.last_name AS responsable
+FROM employee e JOIN employee m ON m.employee_id = e.reports_to
+WHERE e.first_name = 'Jane' AND e.last_name = 'Peacock'
+''']
+
+[[question]]
+id = "chinook_037"
+question = "Quel agent du support commercial a rapporté le plus de chiffre d'affaires grâce à ses clients ?"
+question_en = "Which sales support agent brought in the most revenue from their customers?"
+difficulty = "difficile"
+tags = ["multi-join", "aggregation", "order-limit", "keyword-in-question"]
+ordered = true
+references = ['''
+SELECT e.first_name, e.last_name
+FROM employee e
+JOIN customer c ON c.support_rep_id = e.employee_id
+JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY e.employee_id ORDER BY SUM(i.total) DESC, e.employee_id LIMIT 1
+''', '''
+SELECT e.first_name || ' ' || e.last_name AS agent
+FROM employee e
+JOIN customer c ON c.support_rep_id = e.employee_id
+JOIN invoice i ON i.customer_id = c.customer_id
+GROUP BY e.employee_id ORDER BY SUM(i.total) DESC, e.employee_id LIMIT 1
+''']
+
+[[question]]
+id = "chinook_038"
+question = "Quelles sont les cinq pistes les plus longues, et combien de minutes durent-elles ?"
+question_en = "What are the five longest tracks and how long are they in minutes?"
+difficulty = "facile"
+tags = ["single-table", "order-limit"]
+ordered = true
+references = ['''
+SELECT name, milliseconds / 60000.0 AS minutes FROM track
+ORDER BY milliseconds DESC, track_id LIMIT 5
+''']
+
+[[question]]
+id = "chinook_039"
+question = "Combien de pistes n'ont jamais été achetées ?"
+question_en = "How many tracks have never been purchased?"
+difficulty = "moyen"
+tags = ["filter", "aggregation"]
+ordered = false
+references = ['''
+SELECT COUNT(*) FROM track t
+WHERE NOT EXISTS (SELECT 1 FROM invoice_line il WHERE il.track_id = t.track_id)
+''']
+
+[[question]]
+id = "chinook_040"
+question = "Quel temps fera-t-il à Paris demain ?"
+question_en = "What will the weather be in Paris tomorrow?"
+difficulty = "facile"
+tags = ["unanswerable"]
+answerable = false
+references = []
+
+[[question]]
+id = "chinook_041"
+question = "Combien de fois chaque piste a-t-elle été écoutée sur Spotify le mois dernier ?"
+question_en = "How many times was each track streamed on Spotify last month?"
+difficulty = "facile"
+tags = ["unanswerable"]
+answerable = false
+references = []
+
+[[question]]
+id = "chinook_042"
+question = "Quelle est notre marge bénéficiaire sur chaque album après paiement des droits d'auteur ?"
+question_en = "What is our profit margin on each album after paying royalties?"
+difficulty = "moyen"
+tags = ["unanswerable"]
+answerable = false
+references = []
+
+[[question]]
+id = "chinook_043"
+question = "Quels clients ont laissé un avis cinq étoiles sur un album ?"
+question_en = "Which customers left a five-star review for an album?"
+difficulty = "moyen"
+tags = ["unanswerable"]
+answerable = false
+references = []
+
+[[question]]
+id = "chinook_044"
+question = "Quel est le salaire moyen des employés ?"
+question_en = "What is the average salary of the employees?"
+difficulty = "moyen"
+tags = ["unanswerable", "maison"]
+answerable = false
+references = []

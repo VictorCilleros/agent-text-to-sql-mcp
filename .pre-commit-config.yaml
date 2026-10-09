@@ -28,3 +28,4 @@ repos:
     rev: 0.9.1
     hooks:
       - id: nbstripout  # supprime les sorties des notebooks avant commit
+        exclude: ^notebooks/06_evaluation\.ipynb$
